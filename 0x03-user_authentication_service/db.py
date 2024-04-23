@@ -1,16 +1,13 @@
 #!/usr/bin/env python3
 """DB module
 """
-from sqlalchemy import create_engine
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy import create_engine, tuple_
+from sqlalchemy.exc import InvalidRequestError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.orm.session import Session
-from user import Base, User
-from sqlalchemy.exc import InvalidRequestError
 from sqlalchemy.orm.exc import NoResultFound
+from user import Base, User
 
-VALID_FIELDS = ['id', 'email', 'hashed_password', 'session_id',
-                'reset_token']
 
 class DB:
     """DB class
@@ -19,7 +16,7 @@ class DB:
     def __init__(self) -> None:
         """Initialize a new DB instance
         """
-        self._engine = create_engine("sqlite:///a.db", echo=False)
+        self._engine = create_engine("sqlite:///a.db")
         Base.metadata.drop_all(self._engine)
         Base.metadata.create_all(self._engine)
         self.__session = None
@@ -34,31 +31,58 @@ class DB:
         return self.__session
 
     def add_user(self, email: str, hashed_password: str) -> User:
-        """ Add user to the database
+        """ Creates new User instance and
+            saves them to the database.
+            Args:
+                - email
+                - hashed_password
+            Return:
+                - new User object
         """
-        if not email or not hashed_password:
-            return
-        user = User(email=email, hashed_password=hashed_password)
-        self._session.add(user)
-        self._session.commit()
-        return user
+        session = self._session
+        try:
+            new_user = User(email=email, hashed_password=hashed_password)
+            session.add(new_user)
+            session.commit()
+        except Exception:
+            session.rollback()
+            new_user = None
+        return new_user
 
     def find_user_by(self, **kwargs) -> User:
-        """ Find user by key_pairs arguements
+        """ Find user by a given attribute
+            Args:
+                - Dictionary of attributes to use as search
+                  parameters
+            Return:
+                - User object
         """
-        if not kwargs or not self.valid_query_args(**kwargs):
-            raise InvalidRequestError
-        try:
-            return self._session.query(User).filter_by(**kwargs).one()
-        except Exception:
-            raise NoResultFound
+
+        attrs, vals = [], []
+        for attr, val in kwargs.items():
+            if not hasattr(User, attr):
+                raise InvalidRequestError()
+            attrs.append(getattr(User, attr))
+            vals.append(val)
+
+        session = self._session
+        query = session.query(User)
+        user = query.filter(tuple_(*attrs).in_([tuple(vals)])).first()
+        if not user:
+            raise NoResultFound()
+        return user
 
     def update_user(self, user_id: int, **kwargs) -> None:
-        """Update user based on user ID
+        """ Searches for user instance using given id parameter
+            Args:
+                - user_id: user's id
+            Return:
+                - User instance found
         """
         user = self.find_user_by(id=user_id)
-        for k, v in kwargs.items():
-            if k not in VALID_FIELDS:
+        session = self._session
+        for attr, val in kwargs.items():
+            if not hasattr(User, attr):
                 raise ValueError
-            setattr(user, k, v)
-        self._session.commit()
+            setattr(user, attr, val)
+        session.commit()
